@@ -200,10 +200,6 @@ nvinfer1::IHostMemory* buildEngineYolov8Det(nvinfer1::IBuilder* builder,
   nvinfer1::ITensor* inputTensor22_dfl_2[] = {dfl22_2->getOutput(0), split22_2_1->getOutput(0)};
   nvinfer1::IConcatenationLayer* cat22_dfl_2 = network->addConcatenation(inputTensor22_dfl_2, 2);
 
-
-
-
-
   nvinfer1::IPluginV2Layer* yolo = addYoLoLayer(network, std::vector<nvinfer1::IConcatenationLayer *>{cat22_dfl_0, cat22_dfl_1, cat22_dfl_2}, strides, stridesLength, false);
   yolo->getOutput(0)->setName(kOutputTensorName);
   network->markOutput(*yolo->getOutput(0));
@@ -233,9 +229,7 @@ nvinfer1::IHostMemory* buildEngineYolov8Det(nvinfer1::IBuilder* builder,
   return serialized_model;
 }
 
-nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder,
-                                              nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt,
-                                              const std::string& wts_path, float& gd, float& gw, int& max_channels) {
+nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder, nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt, const std::string& wts_path, float& gd, float& gw, int& max_channels) {
   std::map<std::string, nvinfer1::Weights> weightMap = loadWeights(wts_path);
   nvinfer1::INetworkDefinition* network = builder->createNetworkV2(0U);
   /*******************************************************************************************************
@@ -278,8 +272,6 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder,
   nvinfer1::ITensor* concat13_inputs[] = {upsample12->getOutput(0), conv8->getOutput(0)};
   nvinfer1::IConcatenationLayer* concat13 = network->addConcatenation(concat13_inputs, 2);
   nvinfer1::IElementWiseLayer* conv14 = C2(network, weightMap, *concat13->getOutput(0), get_width(768, gw, max_channels), get_width(768, gw, max_channels), get_depth(3, gd), false, 0.5, "model.14");
-
-
 
   // P4
   nvinfer1::IResizeLayer* upsample15 = network->addResize(*conv14->getOutput(0));
@@ -385,10 +377,6 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder,
   nvinfer1::IConcatenationLayer * cat30_3 = network->addConcatenation(inputTensor30_3, 2);
 
 
-
-
-
-
   /*******************************************************************************************************
     *********************************************  YOLOV8 DETECT  ******************************************
     *******************************************************************************************************/
@@ -464,9 +452,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP6(nvinfer1::IBuilder* builder,
 
 
 
-nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder,
-                                              nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt,
-                                              const std::string& wts_path, float& gd, float& gw, int& max_channels) {
+nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder,nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt,const std::string& wts_path, float& gd, float& gw, int& max_channels) {
 
   std::map<std::string, nvinfer1::Weights> weightMap = loadWeights(wts_path);
   nvinfer1::INetworkDefinition* network = builder->createNetworkV2(0U);
@@ -551,8 +537,6 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder,
   nvinfer1::IElementWiseLayer* conv27 = C2F(network, weightMap, *concat26->getOutput(0), get_width(1024, gw, max_channels), get_width(1024, gw, max_channels), get_depth(3, gd), false, 0.5, "model.27");
 
 
-
-
   /*******************************************************************************************************
     *********************************************  YOLOV8 OUTPUT  ******************************************
     *******************************************************************************************************/
@@ -617,9 +601,6 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder,
   conv28_cv3_3_2->setPaddingNd(nvinfer1::DimsHW{0, 0});
   nvinfer1::ITensor * inputTensor28_3[] = {conv28_cv2_3_2->getOutput(0), conv28_cv3_3_2->getOutput(0)};
   nvinfer1::IConcatenationLayer * cat28_3 = network->addConcatenation(inputTensor28_3, 2);
-
-
-
 
 
   /*******************************************************************************************************
@@ -701,12 +682,7 @@ nvinfer1::IHostMemory* buildEngineYolov8DetP2(nvinfer1::IBuilder* builder,
 
 
 
-
-
-
-nvinfer1::IHostMemory* buildEngineYolov8Cls(nvinfer1::IBuilder* builder,
-                                            nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt,
-                                            const std::string& wts_path, float& gd, float& gw) {
+nvinfer1::IHostMemory* buildEngineYolov8Cls(nvinfer1::IBuilder* builder,nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt,const std::string& wts_path, float& gd, float& gw) {
   std::map<std::string, nvinfer1::Weights> weightMap = loadWeights(wts_path);
   nvinfer1::INetworkDefinition* network = builder->createNetworkV2(0U);
   int max_channels=1280;
@@ -779,9 +755,7 @@ nvinfer1::IHostMemory* buildEngineYolov8Cls(nvinfer1::IBuilder* builder,
 }
 
 
-nvinfer1::IHostMemory* buildEngineYolov8Seg(nvinfer1::IBuilder* builder,
-                                            nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt,
-                                            const std::string& wts_path, float& gd, float& gw, int& max_channels) {
+nvinfer1::IHostMemory* buildEngineYolov8Seg(nvinfer1::IBuilder* builder,nvinfer1::IBuilderConfig* config, nvinfer1::DataType dt,const std::string& wts_path, float& gd, float& gw, int& max_channels) {
   std::map<std::string, nvinfer1::Weights> weightMap = loadWeights(wts_path);
   nvinfer1::INetworkDefinition* network = builder->createNetworkV2(0U);
 
