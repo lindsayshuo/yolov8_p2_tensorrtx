@@ -218,48 +218,46 @@ nvinfer1::IShuffleLayer* DFL(nvinfer1::INetworkDefinition* network, std::map<std
     return shuffle2;
 }
 
-nvinfer1::IPluginV2Layer* addYoLoLayer(nvinfer1::INetworkDefinition* network,
-                                       std::vector<nvinfer1::IConcatenationLayer*> dets, const int* px_arry,
-                                       int px_arry_num, bool is_segmentation) {
-    auto creator = getPluginRegistry()->getPluginCreator("YoloLayer_TRT", "1");
-    const int netinfo_count = 5;  // Assuming the first 5 elements are for netinfo as per existing code.
-    const int total_count = netinfo_count + px_arry_num;  // Total number of elements for netinfo and px_arry combined.
+nvinfer1::IPluginV2Layer* addYoLoLayer(nvinfer1::INetworkDefinition* network, std::vector<nvinfer1::IConcatenationLayer*> dets, const int* px_arry, int px_arry_num, bool is_segmentation) {
+  auto creator = getPluginRegistry()->getPluginCreator("YoloLayer_TRT", "1");
+  const int netinfo_count = 5; // Assuming the first 5 elements are for netinfo as per existing code.
+  const int total_count = netinfo_count + px_arry_num; // Total number of elements for netinfo and px_arry combined.
 
-    std::vector<int> combinedInfo(total_count);
-    // Fill in the first 5 elements as per existing netinfo.
-    combinedInfo[0] = kNumClass;
-    combinedInfo[1] = kInputW;
-    combinedInfo[2] = kInputH;
-    combinedInfo[3] = kMaxNumOutputBbox;
-    combinedInfo[4] = is_segmentation;
+  std::vector<int> combinedInfo(total_count);
+  // Fill in the first 5 elements as per existing netinfo.
+  combinedInfo[0] = kNumClass;
+  combinedInfo[1] = kInputW;
+  combinedInfo[2] = kInputH;
+  combinedInfo[3] = kMaxNumOutputBbox;
+  combinedInfo[4] = is_segmentation;
 
-    // Copy the contents of px_arry into the combinedInfo vector after the initial 5 elements.
-    std::copy(px_arry, px_arry + px_arry_num, combinedInfo.begin() + netinfo_count);
+  // Copy the contents of px_arry into the combinedInfo vector after the initial 5 elements.
+  std::copy(px_arry, px_arry + px_arry_num, combinedInfo.begin() + netinfo_count);
 
-    // Now let's create the PluginField object to hold this combined information.
-    nvinfer1::PluginField pluginField;
-    pluginField.name = "combinedInfo";  // This can be any name that the plugin will recognize
-    pluginField.data = combinedInfo.data();
-    pluginField.type = nvinfer1::PluginFieldType::kINT32;
-    pluginField.length = combinedInfo.size();
+  // Now let's create the PluginField object to hold this combined information.
+  nvinfer1::PluginField pluginField;
+  pluginField.name = "combinedInfo"; // This can be any name that the plugin will recognize
+  pluginField.data = combinedInfo.data();
+  pluginField.type = nvinfer1::PluginFieldType::kINT32;
+  pluginField.length = combinedInfo.size();
 
-    // Create the PluginFieldCollection to hold the PluginField object.
-    nvinfer1::PluginFieldCollection pluginFieldCollection;
-    pluginFieldCollection.nbFields = 1;  // We have just one field, but it's a combined array
-    pluginFieldCollection.fields = &pluginField;
+  // Create the PluginFieldCollection to hold the PluginField object.
+  nvinfer1::PluginFieldCollection pluginFieldCollection;
+  pluginFieldCollection.nbFields = 1; // We have just one field, but it's a combined array
+  pluginFieldCollection.fields = &pluginField;
 
-    // Create the plugin object using the PluginFieldCollection.
-    nvinfer1::IPluginV2* pluginObject = creator->createPlugin("yololayer", &pluginFieldCollection);
+  // Create the plugin object using the PluginFieldCollection.
+  nvinfer1::IPluginV2* pluginObject = creator->createPlugin("yololayer", &pluginFieldCollection);
 
-    // We assume that the plugin is to be added onto the network.
-    // Prepare input tensors for the YOLO Layer.
-    std::vector<nvinfer1::ITensor*> inputTensors;
-    for (auto det : dets) {
-        inputTensors.push_back(det->getOutput(0));  // Assuming each IConcatenationLayer has one output tensor.
-    }
+  // We assume that the plugin is to be added onto the network.
+  // Prepare input tensors for the YOLO Layer.
+  std::vector<nvinfer1::ITensor*> inputTensors;
+  for (auto det : dets) {
+    inputTensors.push_back(det->getOutput(0)); // Assuming each IConcatenationLayer has one output tensor.
+  }
 
-    // Add the plugin to the network using the prepared input tensors.
-    nvinfer1::IPluginV2Layer* yoloLayer = network->addPluginV2(inputTensors.data(), inputTensors.size(), *pluginObject);
+  // Add the plugin to the network using the prepared input tensors.
+  nvinfer1::IPluginV2Layer* yoloLayer = network->addPluginV2(inputTensors.data(), inputTensors.size(), *pluginObject);
 
-    return yoloLayer;  // Return the added YOLO layer.
+  return yoloLayer; // Return the added YOLO layer.
 }
