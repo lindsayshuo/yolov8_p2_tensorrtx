@@ -19,6 +19,12 @@ IOU_THRESHOLD = 0.4
 POSE_NUM = 17 * 3
 DET_NUM = 6
 SEG_NUM = 32
+keypoint_pairs = [
+    (0, 1), (0, 2), (0, 5), (0, 6), (1, 2),
+    (1, 3), (2, 4), (5, 6), (5, 7), (5, 11),
+    (6, 8), (6, 12), (7, 9), (8, 10), (11, 12),
+    (11, 13), (12, 14), (13, 15), (14, 16)
+]
 
 
 def get_img_path_batches(batch_size, img_dir):
@@ -117,14 +123,13 @@ class YoLov8TRT(object):
         # Store
         self.stream = stream
         self.context = context
-        self.engine = engine
         self.host_inputs = host_inputs
         self.cuda_inputs = cuda_inputs
         self.host_outputs = host_outputs
         self.cuda_outputs = cuda_outputs
         self.bindings = bindings
         self.batch_size = engine.max_batch_size
-        self.det_output_length = host_outputs[0].shape[0]
+        self.det_output_size = host_outputs[0].shape[0]
 
     def infer(self, raw_image_generator):
         threading.Thread.__init__(self)
@@ -148,7 +153,8 @@ class YoLov8TRT(object):
             batch_image_raw.append(image_raw)
             batch_origin_h.append(origin_h)
             batch_origin_w.append(origin_w)
-            np.copyto(batch_input_image[i], input_image)
+            np.copyto(batch_input_image[i],
+                      input_image)
         batch_input_image = np.ascontiguousarray(batch_input_image)
 
         # Copy input image to host buffer
@@ -169,10 +175,12 @@ class YoLov8TRT(object):
         output = host_outputs[0]
         # Do postprocess
         for i in range(self.batch_size):
-            result_boxes, result_scores, result_classid = self.post_process(
-                output[i * self.det_output_length: (i + 1) * self.det_output_length], batch_origin_h[i],
-                batch_origin_w[i]
+
+            result_boxes, result_scores, result_classid, keypoints = self.post_process(
+                output[i * (self.det_output_size): (i + 1) * (self.det_output_size)],
+                batch_origin_h[i], batch_origin_w[i]
             )
+
             # Draw rectangles and labels on the original image
             for j in range(len(result_boxes)):
                 box = result_boxes[j]
@@ -183,6 +191,24 @@ class YoLov8TRT(object):
                         categories[int(result_classid[j])], result_scores[j]
                     ),
                 )
+
+                num_keypoints = len(keypoints[j]) // 3
+                points = []
+                for k in range(num_keypoints):
+                    x = keypoints[j][k * 3]
+                    y = keypoints[j][k * 3 + 1]
+                    confidence = keypoints[j][k * 3 + 2]
+                    if confidence > 0:
+                        points.append((int(x), int(y)))
+                    else:
+                        points.append(None)
+
+                # 根据关键点索引对绘制线条
+                for pair in keypoint_pairs:
+                    partA, partB = pair
+                    if points[partA] and points[partB]:
+                        cv2.line(batch_image_raw[i], points[partA], points[partB], (0, 255, 0), 2)
+
         return batch_image_raw, end - start
 
     def destroy(self):
@@ -251,58 +277,78 @@ class YoLov8TRT(object):
         image = np.ascontiguousarray(image)
         return image, image_raw, h, w
 
-    def xywh2xyxy(self, origin_h, origin_w, x):
-        """
-        description:    Convert nx4 boxes from [x, y, w, h] to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
-        param:
-            origin_h:   height of original image
-            origin_w:   width of original image
-            x:          A boxes numpy, each row is a box [center_x, center_y, w, h]
-        return:
-            y:          A boxes numpy, each row is a box [x1, y1, x2, y2]
-        """
-        y = np.zeros_like(x)
+    def xywh2xyxy_with_keypoints(self, origin_h, origin_w, boxes, keypoints):
+
+        n = len(boxes)
+        box_array = np.zeros_like(boxes)
+        keypoint_array = np.zeros_like(keypoints)
         r_w = self.input_w / origin_w
         r_h = self.input_h / origin_h
-        if r_h > r_w:
-            y[:, 0] = x[:, 0]
-            y[:, 2] = x[:, 2]
-            y[:, 1] = x[:, 1] - (self.input_h - r_w * origin_h) / 2
-            y[:, 3] = x[:, 3] - (self.input_h - r_w * origin_h) / 2
-            y /= r_w
-        else:
-            y[:, 0] = x[:, 0] - (self.input_w - r_h * origin_w) / 2
-            y[:, 2] = x[:, 2] - (self.input_w - r_h * origin_w) / 2
-            y[:, 1] = x[:, 1]
-            y[:, 3] = x[:, 3]
-            y /= r_h
+        for i in range(n):
+            if r_h > r_w:
+                box = boxes[i]
+                lmk = keypoints[i]
+                box_array[i, 0] = box[0] / r_w
+                box_array[i, 2] = box[2] / r_w
+                box_array[i, 1] = (box[1] - (self.input_h - r_w * origin_h) / 2) / r_w
+                box_array[i, 3] = (box[3] - (self.input_h - r_w * origin_h) / 2) / r_w
 
-        return y
+                for j in range(0, len(lmk), 3):
+                    keypoint_array[i, j] = lmk[j] / r_w
+                    keypoint_array[i, j + 1] = (lmk[j + 1] - (self.input_h - r_w * origin_h) / 2) / r_w
+                    keypoint_array[i, j + 2] = lmk[j + 2]
+            else:
+
+                box = boxes[i]
+                lmk = keypoints[i]
+
+                box_array[i, 0] = (box[0] - (self.input_w - r_h * origin_w) / 2) / r_h
+                box_array[i, 2] = (box[2] - (self.input_w - r_h * origin_w) / 2) / r_h
+                box_array[i, 1] = box[1] / r_h
+                box_array[i, 3] = box[3] / r_h
+
+                for j in range(0, len(lmk), 3):
+                    keypoint_array[i, j] = (lmk[j] - (self.input_w - r_h * origin_w) / 2) / r_h
+                    keypoint_array[i, j + 1] = lmk[j + 1] / r_h
+                    keypoint_array[i, j + 2] = lmk[j + 2]
+
+        return box_array, keypoint_array
 
     def post_process(self, output, origin_h, origin_w):
         """
-        description: postprocess the prediction
+        description: Post-process the prediction to include pose keypoints
         param:
-            output:     A numpy likes [num_boxes,cx,cy,w,h,conf,cls_id, cx,cy,w,h,conf,cls_id, ...]
-            origin_h:   height of original image
-            origin_w:   width of original image
+            output:     A numpy array like [num_boxes, cx, cy, w, h, conf,
+            cls_id, px1, py1, pconf1,...px17, py17, pconf17] where p denotes pose keypoint
+            origin_h:   Height of original image
+            origin_w:   Width of original image
         return:
-            result_boxes: finally boxes, a boxes numpy, each row is a box [x1, y1, x2, y2]
-            result_scores: finally scores, a numpy, each element is the score correspoing to box
-            result_classid: finally classid, a numpy, each element is the classid correspoing to box
+            result_boxes:    Final boxes, a numpy array, each row is a box [x1, y1, x2, y2]
+            result_scores:   Final scores, a numpy array, each element is the score corresponding to box
+            result_classid:  Final classID, a numpy array, each element is the classid corresponding to box
+            result_keypoints: Final keypoints, a list of numpy arrays,
+            each element represents keypoints for a box, shaped as (#keypoints, 3)
         """
+        # Number of values per detection: 38 base values + 17 keypoints * 3 values each
         num_values_per_detection = DET_NUM + SEG_NUM + POSE_NUM
-        # Get the num of boxes detected
+        # Get the number of boxes detected
         num = int(output[0])
-        # Reshape to a two dimentional ndarray
-        # pred = np.reshape(output[1:], (-1, 38))[:num, :]
+        # Reshape to a two-dimensional ndarray with the full detection shape
         pred = np.reshape(output[1:], (-1, num_values_per_detection))[:num, :]
-        # Do nms
-        boxes = self.non_max_suppression(pred, origin_h, origin_w, conf_thres=CONF_THRESH, nms_thres=IOU_THRESHOLD)
+
+        # Perform non-maximum suppression to filter the detections
+        boxes = self.non_max_suppression(
+            pred[:, :num_values_per_detection], origin_h, origin_w,
+            conf_thres=CONF_THRESH, nms_thres=IOU_THRESHOLD)
+
+        # Extract the bounding boxes, confidence scores, and class IDs
         result_boxes = boxes[:, :4] if len(boxes) else np.array([])
         result_scores = boxes[:, 4] if len(boxes) else np.array([])
         result_classid = boxes[:, 5] if len(boxes) else np.array([])
-        return result_boxes, result_scores, result_classid
+        result_keypoints = boxes[:, -POSE_NUM:] if len(boxes) else np.array([])
+
+        # Return the post-processed results including keypoints
+        return result_boxes, result_scores, result_classid, result_keypoints
 
     def bbox_iou(self, box1, box2, x1y1x2y2=True):
         """
@@ -331,8 +377,8 @@ class YoLov8TRT(object):
         inter_rect_x2 = np.minimum(b1_x2, b2_x2)
         inter_rect_y2 = np.minimum(b1_y2, b2_y2)
         # Intersection area
-        inter_area = (np.clip(inter_rect_x2 - inter_rect_x1 + 1, 0, None)
-                      * np.clip(inter_rect_y2 - inter_rect_y1 + 1, 0, None))
+        inter_area = np.clip(
+            inter_rect_x2 - inter_rect_x1 + 1, 0, None) * np.clip(inter_rect_y2 - inter_rect_y1 + 1, 0, None)
         # Union Area
         b1_area = (b1_x2 - b1_x1 + 1) * (b1_y2 - b1_y1 + 1)
         b2_area = (b2_x2 - b2_x1 + 1) * (b2_y2 - b2_y1 + 1)
@@ -357,27 +403,33 @@ class YoLov8TRT(object):
         # Get the boxes that score > CONF_THRESH
         boxes = prediction[prediction[:, 4] >= conf_thres]
         # Trandform bbox from [center_x, center_y, w, h] to [x1, y1, x2, y2]
-        boxes[:, :4] = self.xywh2xyxy(origin_h, origin_w, boxes[:, :4])
+        res_array = np.copy(boxes)
+        box_pred_deep_copy = np.copy(boxes[:, :4])
+        keypoints_pred_deep_copy = np.copy(boxes[:, -POSE_NUM:])
+        res_box, res_keypoints = self.xywh2xyxy_with_keypoints(
+            origin_h, origin_w, box_pred_deep_copy, keypoints_pred_deep_copy)
+        res_array[:, :4] = res_box
+        res_array[:, -POSE_NUM:] = res_keypoints
         # clip the coordinates
-        boxes[:, 0] = np.clip(boxes[:, 0], 0, origin_w - 1)
-        boxes[:, 2] = np.clip(boxes[:, 2], 0, origin_w - 1)
-        boxes[:, 1] = np.clip(boxes[:, 1], 0, origin_h - 1)
-        boxes[:, 3] = np.clip(boxes[:, 3], 0, origin_h - 1)
+        res_array[:, 0] = np.clip(res_array[:, 0], 0, origin_w - 1)
+        res_array[:, 2] = np.clip(res_array[:, 2], 0, origin_w - 1)
+        res_array[:, 1] = np.clip(res_array[:, 1], 0, origin_h - 1)
+        res_array[:, 3] = np.clip(res_array[:, 3], 0, origin_h - 1)
         # Object confidence
-        confs = boxes[:, 4]
+        confs = res_array[:, 4]
         # Sort by the confs
-        boxes = boxes[np.argsort(-confs)]
+        res_array = res_array[np.argsort(-confs)]
         # Perform non-maximum suppression
-        keep_boxes = []
-        while boxes.shape[0]:
-            large_overlap = self.bbox_iou(np.expand_dims(boxes[0, :4], 0), boxes[:, :4]) > nms_thres
-            label_match = boxes[0, -1] == boxes[:, -1]
-            # Indices of boxes with lower confidence scores, large IOUs and matching labels
+        keep_res_array = []
+        while res_array.shape[0]:
+            large_overlap = self.bbox_iou(np.expand_dims(res_array[0, :4], 0), res_array[:, :4]) > nms_thres
+            label_match = res_array[0, 5] == res_array[:, 5]
             invalid = large_overlap & label_match
-            keep_boxes += [boxes[0]]
-            boxes = boxes[~invalid]
-        boxes = np.stack(keep_boxes, 0) if len(keep_boxes) else np.array([])
-        return boxes
+            keep_res_array.append(res_array[0])
+            res_array = res_array[~invalid]
+
+        res_array = np.stack(keep_res_array, 0) if len(keep_res_array) else np.array([])
+        return res_array
 
 
 class inferThread(threading.Thread):
@@ -392,6 +444,7 @@ class inferThread(threading.Thread):
             parent, filename = os.path.split(img_path)
             save_name = os.path.join('output', filename)
             # Save image
+
             cv2.imwrite(save_name, batch_image_raw[i])
         print('input->{}, time->{:.2f}ms, saving into output/'.format(self.image_path_batch, use_time * 1000))
 
@@ -408,8 +461,8 @@ class warmUpThread(threading.Thread):
 
 if __name__ == "__main__":
     # load custom plugin and engine
-    PLUGIN_LIBRARY = "build/libmyplugins.so"
-    engine_file_path = "yolov8s.engine"
+    PLUGIN_LIBRARY = "./build/libmyplugins.so"
+    engine_file_path = "yolov8n-pose.engine"
 
     if len(sys.argv) > 1:
         engine_file_path = sys.argv[1]
@@ -420,20 +473,7 @@ if __name__ == "__main__":
 
     # load coco labels
 
-    categories = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
-                  "traffic light",
-                  "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
-                  "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase",
-                  "frisbee",
-                  "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard",
-                  "surfboard",
-                  "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
-                  "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
-                  "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard",
-                  "cell phone",
-                  "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors",
-                  "teddy bear",
-                  "hair drier", "toothbrush"]
+    categories = ["person"]
 
     if os.path.exists('output/'):
         shutil.rmtree('output/')
